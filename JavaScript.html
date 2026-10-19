@@ -1,0 +1,524 @@
+<script>
+/* SiDUK: logika klien. Semua halaman dimuat sekali; pindah menu = toggle class (0 ms).
+   Data master di memori (S.d), pencarian/filter lokal, tulis optimistik + sinkron latar belakang. */
+const $ = i => document.getElementById(i), qa = s => [...document.querySelectorAll(s)];
+const ss_ = { get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} }, del: k => { try { sessionStorage.removeItem(k); } catch (e) {} } };
+const S = { tok: ss_.get('sd_tok'), d: null, v: 'dash', pg: 1, q: '', fp: '', fk: '', fs: 'Aktif', vm: 'tbl', nl: null, tab: 'naik', nsel: {}, foto: {}, csel: {}, cl: null };
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uid = () => 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const opt = (arr, sel, ph) => (ph ? `<option value="">${ph}</option>` : '') + arr.map(a => `<option value="${esc(a[0])}"${String(a[0]) === String(sel) ? ' selected' : ''}>${esc(a[1])}</option>`).join('');
+const debounce = (f, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f(...a), ms); }; };
+const IC = { home: 'M3 11l9-8 9 8M5 10v10h14V10', users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9', layers: 'M12 2l10 5-10 5L2 7zM2 12l10 5 10-5M2 17l10 5 10-5', grid: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z', book: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5V22h16', edit: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z', swap: 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3', shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z', cog: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z' };
+const ic = n => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${IC[n]}"/></svg>`;
+const NAV = [['OPERASIONAL DATA'], ['dash', 'Dashboard', 'home'], ['siswa', 'Manajemen Siswa', 'users', 'siswa'], ['kelas', 'Kelas / Rombel', 'layers', 'master'],
+  ['program', 'Program Keahlian', 'grid', 'master'], ['mapel', 'Mata Pelajaran', 'book', 'master'], ['nilai', 'Penilaian & Rapor', 'edit', 'nilai'], ['catatan', 'Catatan Wali', 'book', 'catatan'],
+  ['proses', 'Proses Massal', 'swap', 'proses'], ['cetak', 'Pusat Cetak', 'layers', 'cetak'], ['SISTEM APLIKASI'], ['users', 'Manajemen Pengguna', 'shield', 'user'], ['sekolah', 'Konfigurasi Instansi', 'cog', 'sekolah']];
+const ROLE = { admin: 'Admin/TU', guru: 'Guru Mapel', wali: 'Wali Kelas', bk: 'Guru BK', kepsek: 'Kepsek' };
+const P = m => (S.d && S.d.perm[m]) || '';
+const has = (m, a) => P(m).indexOf(a) > -1;
+
+/* ---------- panggilan server ---------- */
+let busy = 0;
+const bar = on => { busy += on ? 1 : -1; $('bar').classList.toggle('on', busy > 0); };
+function call(a, p) {
+  bar(1);
+  return new Promise((ok, no) => google.script.run
+    .withSuccessHandler(r => { bar(0); if (r.ok) return ok(r.data); if (r.msg === 'AUTH') { out(); return no(new Error('Sesi berakhir, silakan masuk lagi.')); } no(new Error(r.msg)); })
+    .withFailureHandler(e => { bar(0); no(new Error(e.message || 'Koneksi gagal')); })
+    .api(S.tok, a, p || {}));
+}
+function toast(m, t) {
+  const e = document.createElement('div'); e.className = 'toast ' + (t || ''); e.textContent = m; $('toasts').appendChild(e);
+  setTimeout(() => e.remove(), t === 'err' ? 6000 : 2800);
+}
+
+/* ---------- sesi & boot (stale-while-revalidate) ---------- */
+function start() {
+  const th = localStorage.getItem('sd_theme'); if (th) document.documentElement.dataset.theme = th;
+  const c = ss_.get('sd_boot');
+  if (S.tok && c) { try { S.d = JSON.parse(c); show(); } catch (e) {} }
+  if (S.tok) refresh(); else $('login').hidden = false;
+  setInterval(tick, 30000); tick();
+}
+function refresh() {
+  return call('boot').then(d => { S.d = d; ss_.set('sd_boot', JSON.stringify(d)); show(); })
+    .catch(e => { if (S.tok) toast(e.message, 'err'); });
+}
+$('loginForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const u = $('lu').value.trim(), p = $('lp').value, b = $('lb'), er = $('loginErr');
+  er.hidden = true;
+  if (!u || !p) { er.textContent = 'Isi username dan kata sandi.'; er.hidden = false; return; }
+  b.disabled = true; b.textContent = 'MEMERIKSA...';
+  google.script.run.withSuccessHandler(r => {
+    b.disabled = false; b.textContent = 'MASUK KE SISTEM';
+    if (!r.ok) { er.textContent = r.msg; er.hidden = false; return; }
+    S.tok = r.data.tok; ss_.set('sd_tok', S.tok); $('lp').value = '';
+    refresh();
+  }).withFailureHandler(x => { b.disabled = false; b.textContent = 'MASUK KE SISTEM'; er.textContent = x.message || 'Koneksi gagal'; er.hidden = false; }).login(u, p);
+});
+function out() {
+  S.tok = null; S.d = null; ss_.del('sd_tok'); ss_.del('sd_boot'); try { Object.keys(localStorage).filter(k => k.indexOf('sd_dr_') === 0).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  $('app').hidden = true; $('login').hidden = false; menu(0);
+}
+
+/* ---------- navigasi SPA (tanpa reload, tanpa ?page=) ---------- */
+function show() {
+  idx(); $('login').hidden = true; $('app').hidden = false;
+  $('wn').textContent = S.d.user.nama; $('wr').textContent = ROLE[S.d.user.role] || S.d.user.role;
+  $('nav').innerHTML = NAV.map(n => {
+    if (n.length === 1) return `<div class="ngrp">${n[0]}</div>`;
+    if (n[3] && !P(n[3])) return '';
+    return `<button class="nl" data-v="${n[0]}" onclick="go('${n[0]}')">${ic(n[2])}<span>${n[1]}</span></button>`;
+  }).join('');
+  rDash(); rSiswa(); rMaster('kelas'); rMaster('program'); rMaster('mapel'); rNilai(); rCatatan(); rProses(); rCetak(); rMaster('users'); rSekolah();
+  go(S.v);
+}
+function go(v) {
+  const m = (NAV.find(n => n[0] === v) || [])[3];
+  if (m && !P(m)) v = 'dash';
+  S.v = v; qa('.sec').forEach(s => s.classList.toggle('on', s.id === 's-' + v));
+  qa('.nl').forEach(b => b.classList.toggle('on', b.dataset.v === v)); menu(0); window.scrollTo(0, 0);
+}
+const menu = o => document.body.classList.toggle('nav-open', !!o);
+function theme() { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; localStorage.setItem('sd_theme', t); }
+function tick() { const d = new Date(); $('clock').textContent = d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) + ' | ' + d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':') + ' WIB'; }
+const gsearch = debounce(v => { if (!S.d || !P('siswa')) return; S.q = v; S.pg = 1; const q = $('sq'); if (q) q.value = v; go('siswa'); sList(); }, 200);
+
+/* ---------- indeks lokal ---------- */
+function idx() {
+  const m = k => { const o = {}; S.d[k].forEach(x => o[x.ID] = x); return o; };
+  S.K = m('kelas'); S.Pr = m('program'); S.M = m('mapel');
+  S.U = {}; (S.d.users || []).forEach(u => S.U[u.Username] = u);
+}
+const kName = id => (S.K[id] || {}).Nama || '-';
+const prKode = kid => ((S.Pr[(S.K[kid] || {}).ProgramID]) || {}).Kode || '-';
+const myKelas = () => S.d.kelas.filter(k => !S.d.user.scope || S.d.user.scope.indexOf(k.ID) > -1);
+
+/* ---------- modal ---------- */
+function modal(h) { $('mdb').innerHTML = h; $('md').hidden = false; const f = $('mdb').querySelector('input:not([disabled]),select'); if (f) setTimeout(() => f.focus(), 30); }
+function closeM() { $('md').hidden = true; $('mdb').innerHTML = ''; }
+$('md').addEventListener('mousedown', e => { if (e.target === $('md')) closeM(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (!$('md').hidden) closeM(); else if (!$('pv').hidden) pvClose(); } });
+function confirmBox(msg, fn, danger) {
+  window._cf = fn;
+  modal(`<h3>Konfirmasi</h3><p>${msg}</p><div class="row mt" style="justify-content:flex-end"><button class="btn" onclick="closeM()">BATAL</button><button class="btn ${danger ? 'd' : 'p'}" onclick="closeM();_cf()">LANJUTKAN</button></div>`);
+}
+
+/* ---------- DASHBOARD (angka lokal, rata-rata nilai dari server) ---------- */
+function rDash() {
+  const d = S.d.dash, sis = S.d.siswa.filter(x => x.Status === 'Aktif'), L = sis.filter(x => x.JK === 'L').length, Pn = sis.length - L, tot = sis.length || 1;
+  const per = S.d.program.map(p => ({ k: p.Kode, jml: sis.filter(x => (S.K[x.KelasID] || {}).ProgramID === p.ID).length, avg: ((d.perProg.find(z => z.k === p.Kode)) || {}).avg || 0 }));
+  const sh = ['#212529', '#495057', '#6c757d', '#adb5bd', '#ced4da', '#e9ecef', '#868e96'];
+  let acc = 0; const stops = per.filter(p => p.jml).map((p, i) => { const a = acc, b = acc + p.jml / tot * 100; acc = b; return `${sh[i % 7]} ${a}% ${b}%`; }).join(',') || 'var(--s3) 0 100%';
+  const rec = sis.slice(-5).reverse();
+  $('s-dash').innerHTML = `<div class="head"><div><h2>Dashboard Overview</h2><span class="mono tiny muted">TA ${esc(S.d.sekolah.TahunAjaran || '')} | SEMESTER ${esc(S.d.sekolah.Semester || '')}</span></div><button class="btn" onclick="refresh().then(()=>toast('Data diperbarui'))">SINKRONKAN</button></div>
+  <div class="grid g4">
+   <div class="card kpi"><div class="lb">TOTAL_PESERTA_DIDIK</div><div class="v">${sis.length}</div></div>
+   <div class="card kpi"><div class="lb">PROGRAM_KEAHLIAN</div><div class="v">${S.d.program.length}</div></div>
+   <div class="card kpi"><div class="lb">TOTAL_ROMBEL</div><div class="v">${S.d.kelas.length}</div></div>
+   <div class="card kpi"><div class="lb">RATA_RATA_NILAI</div><div class="v">${d.nilai ? d.rata : '-'}</div></div></div>
+  <div class="grid g2 mt">
+   <div class="card"><div class="mono tiny muted">KOMPETENSI NILAI</div><h3>Rata-rata rapor per program</h3><div class="bars">${per.map(p => `<div class="bar"><span>${esc(p.k)}</span><i><b style="width:${p.avg}%"></b></i><span class="r">${p.avg || '-'}</span></div>`).join('')}</div></div>
+   <div class="card"><div class="mono tiny muted">KOMPOSISI SISWA</div><h3>Sebaran program</h3><div class="donut" style="background:conic-gradient(${stops})"></div>
+    <div class="legend">${per.filter(p => p.jml).map((p, i) => `<span style="--c:${sh[i % 7]}">${esc(p.k)} ${p.jml}</span>`).join('')}</div>
+    <div class="bars"><div class="bar"><span>L</span><i><b style="width:${L / tot * 100}%"></b></i><span class="r">${L}</span></div><div class="bar"><span>P</span><i><b style="width:${Pn / tot * 100}%"></b></i><span class="r">${Pn}</span></div></div></div></div>
+  <div class="card mt"><h3>Registrasi terbaru</h3><div class="tw mt"><table><thead><tr><th>NISN</th><th>Nama</th><th>Kelas</th><th>Status</th></tr></thead><tbody>${rec.map(s => `<tr><td class="mono">${esc(s.NISN)}</td><td><b>${esc(s.Nama)}</b></td><td>${esc(kName(s.KelasID))}</td><td><span class="badge">${esc(s.Status)}</span></td></tr>`).join('') || '<tr><td colspan="4" class="muted">Belum ada data.</td></tr>'}</tbody></table></div></div>`;
+}
+
+/* ---------- SISWA ---------- */
+const SF = [['NIPD', 'NIPD'], ['NISN', 'NISN (10 digit)'], ['NIK', 'NIK (16 digit)'], ['Nama', 'Nama lengkap'], ['JK', 'Jenis kelamin', 'sel', [['L', 'Laki-laki'], ['P', 'Perempuan']]],
+  ['Agama', 'Agama', 'sel', ['Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu'].map(a => [a, a])], ['TTL', 'Tempat, tanggal lahir'], ['KelasID', 'Kelas', 'kelas'],
+  ['Alamat', 'Alamat', 'full'], ['Ayah', 'Nama ayah'], ['Ibu', 'Nama ibu'], ['Wali', 'Nama wali'], ['SMPAsal', 'Sekolah asal'], ['IjazahSMP', 'No. ijazah SMP'],
+  ['Status', 'Status', 'sel', ['Aktif', 'Lulus', 'Pindah', 'Keluar'].map(a => [a, a])]];
+function rSiswa() {
+  $('s-siswa').innerHTML = `<div class="head"><div><h2>Manajemen Siswa</h2><span id="sc" class="mono tiny muted"></span></div><div class="row">${S.d.user.role === 'admin' ? '<button class="btn" onclick="fImpor()">IMPOR</button><button class="btn" onclick="eksporSiswa()">EKSPOR</button>' : ''}${has('siswa', 'T') ? '<button class="btn p" onclick="fSiswa()">+ TAMBAH SISWA</button>' : ''}</div></div>
+  <div class="tools"><input id="sq" class="in" placeholder="Cari nama / NISN / NIPD" value="${esc(S.q)}" oninput="S.q=this.value;S.pg=1;sList()" aria-label="Cari siswa">
+   <select id="sp" class="in" onchange="S.fp=this.value;S.pg=1;sList()">${opt(S.d.program.map(p => [p.ID, p.Kode]), S.fp, 'Semua program')}</select>
+   <select id="sk" class="in" onchange="S.fk=this.value;S.pg=1;sList()">${opt(myKelas().map(k => [k.ID, k.Nama]), S.fk, 'Semua kelas')}</select>
+   <select id="st" class="in" onchange="S.fs=this.value;S.pg=1;sList()">${opt([['Aktif', 'Aktif'], ['Lulus', 'Lulus (alumni)'], ['Pindah', 'Pindah'], ['Keluar', 'Keluar'], ['', 'Semua status']], S.fs)}</select>
+   <button class="btn" onclick="S.vm=S.vm==='tbl'?'gal':'tbl';sList()">TABEL / GALERI</button></div><div id="sl"></div><div class="pager" id="spg"></div>`;
+  sList();
+}
+function sList() {
+  const q = S.q.trim().toLowerCase(), N = 20;
+  const f = S.d.siswa.filter(s => (!S.fs || s.Status === S.fs) && (!S.fk || s.KelasID === S.fk) && (!S.fp || (S.K[s.KelasID] || {}).ProgramID === S.fp) &&
+    (!q || String(s.Nama).toLowerCase().indexOf(q) > -1 || String(s.NISN).indexOf(q) > -1 || String(s.NIPD).indexOf(q) > -1));
+  const pages = Math.max(1, Math.ceil(f.length / N)); if (S.pg > pages) S.pg = pages;
+  const rows = f.slice((S.pg - 1) * N, S.pg * N), l = $('sl'); if (!l) return;
+  const act = s => `<button class="btn sm" onclick="dSiswa('${s.ID}')">DETAIL</button>` + (has('siswa', 'U') ? ` <button class="btn sm" onclick="fSiswa('${s.ID}')">UBAH</button>` : '') + (has('siswa', 'H') ? ` <button class="btn sm d" onclick="xSiswa('${s.ID}')">HAPUS</button>` : '');
+  l.innerHTML = S.vm === 'tbl'
+    ? `<div class="tw"><table><thead><tr><th class="n">No</th><th>NIPD / NISN</th><th>Nama</th><th>Program</th><th>Kelas</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((s, i) => `<tr><td class="n">${(S.pg - 1) * N + i + 1}</td><td class="mono">${esc(s.NIPD)}<br><span class="muted">${esc(s.NISN)}</span></td><td><b>${esc(s.Nama)}</b><br><span class="tiny muted">${esc(s.TTL)}</span></td><td>${esc(prKode(s.KelasID))}</td><td>${esc(kName(s.KelasID))}</td><td><span class="badge ${s.Status === 'Aktif' ? '' : (s.Status === 'Lulus' ? 'solid' : 'hatch')}">${esc(s.Status)}</span></td><td style="white-space:nowrap">${act(s)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Tidak ada data.</td></tr>'}</tbody></table></div>`
+    : `<div class="gal">${rows.map(s => `<div class="card" onclick="dSiswa('${s.ID}')"><div class="ph" data-f="${s.ID}"><span>[ 3 x 4 FOTO ]</span></div><b style="display:block;margin-top:8px">${esc(s.Nama)}</b><span class="mono tiny muted">${esc(s.NISN)} | ${esc(kName(s.KelasID))}</span></div>`).join('') || '<p class="muted">Tidak ada data.</p>'}</div>`;
+  if (S.vm === 'gal') loadFotos(rows);
+  $('sc').textContent = f.length + ' DATA DITEMUKAN';
+  $('spg').innerHTML = `<span>HAL ${S.pg} / ${pages}</span><span><button class="btn sm" ${S.pg < 2 ? 'disabled' : ''} onclick="S.pg--;sList()">&laquo; PREV</button> <button class="btn sm" ${S.pg >= pages ? 'disabled' : ''} onclick="S.pg++;sList()">NEXT &raquo;</button></span>`;
+}
+function dSiswa(id) {
+  const s = S.d.siswa.find(x => x.ID === id); if (!s) return;
+  const r = (k, v) => `<dt>${k}</dt><dd>${esc(v) || '-'}</dd>`, rl = S.d.user.role, canF = has('siswa', 'U') && (rl === 'admin' || rl === 'wali'), sklOk = s.Status === 'Lulus' && s.Valid === '1';
+  modal(`<div class="row between"><h3>${esc(s.Nama)}</h3><span class="badge solid">${esc(s.Status)}</span></div>
+  <div class="mt" style="display:grid;grid-template-columns:96px 1fr;gap:12px"><div><div class="ph" id="dph"><span>[ 3 x 4 FOTO ]</span></div>${canF ? `<button class="btn sm wide mt" onclick="pickFoto('${id}','masuk')">FOTO MASUK</button><button class="btn sm wide mt" onclick="pickFoto('${id}','tamat')">FOTO TAMAT</button>` : ''}</div>
+  <dl class="dl" style="grid-template-columns:96px 1fr">${r('NIPD / NISN', s.NIPD + ' / ' + s.NISN)}${s.NIK !== undefined ? r('NIK', s.NIK) : ''}${r('Kelas', kName(s.KelasID) + ' (' + prKode(s.KelasID) + ')')}${r('TTL', s.TTL)}${r('JK / Agama', s.JK + ' / ' + s.Agama)}${r('Alamat', s.Alamat)}${s.Ayah !== undefined ? r('Ayah', s.Ayah) + r('Ibu', s.Ibu) + r('Wali', s.Wali) : ''}${r('Sekolah asal', s.SMPAsal)}${r('Ijazah SMP', s.IjazahSMP)}${s.Status === 'Lulus' ? r('Validasi lulus', s.Valid === '1' ? 'Sudah divalidasi' : 'Menunggu Kepala Sekolah') : ''}</dl></div>
+  <div class="row mt" style="justify-content:flex-end"><button class="btn" onclick="closeM()">TUTUP</button>${has('cetak', 'L') ? `<button class="btn" onclick="closeM();cetak(['${s.ID}'],'trans')">TRANSKRIP</button>${sklOk ? `<button class="btn" onclick="closeM();cetak(['${s.ID}'],'skl')">SKL</button>` : ''}<button class="btn p" onclick="closeM();cetak(['${s.ID}'],'induk')">CETAK A4</button>` : ''}</div>`);
+  const k = id + '|m', put = d => { const e = $('dph'); if (e && d) e.innerHTML = '<img src="' + d + '" alt="Pas foto">'; };
+  if (S.foto[k]) put(S.foto[k]); else if (s.FotoMasuk) call('fotoBatch', { ids: [id], jenis: 'masuk' }).then(o => { if (o[id]) { S.foto[k] = o[id]; put(o[id]); } }).catch(() => {});
+}
+function compress(file) {
+  return new Promise((ok, no) => {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return no(new Error('Gunakan JPG, PNG, atau WebP'));
+    if (file.size > 2 * 1048576) return no(new Error('Ukuran maksimal 2 MB'));
+    const im = new Image(), u = URL.createObjectURL(file);
+    im.onload = () => {
+      const W = 300, H = 400, c = document.createElement('canvas'); c.width = W; c.height = H;
+      const x = c.getContext('2d'), r = Math.max(W / im.width, H / im.height), w = im.width * r, h = im.height * r;
+      x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.drawImage(im, (W - w) / 2, (H - h) / 2, w, h); URL.revokeObjectURL(u); ok(c.toDataURL('image/jpeg', .78));
+    };
+    im.onerror = () => no(new Error('Gambar tidak terbaca')); im.src = u;
+  });
+}
+function pickFoto(id, j) {
+  const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/jpeg,image/png,image/webp';
+  i.onchange = () => {
+    const f = i.files[0]; if (!f) return;
+    compress(f).then(d => {
+      const e = $('dph'); if (e && j === 'masuk') e.innerHTML = '<img src="' + d + '" alt="Pas foto">';
+      S.foto[id + '|' + (j === 'tamat' ? 't' : 'm')] = d; toast('Mengunggah foto...');
+      return call('saveFoto', { id, jenis: j, data: d }).then(() => refresh()).then(() => toast('Foto tersimpan'));
+    }).catch(e => toast(e.message, 'err'));
+  };
+  i.click();
+}
+function loadFotos(rows) {
+  const put = () => rows.forEach(s => { const d = S.foto[s.ID + '|m'], e = document.querySelector('.ph[data-f="' + s.ID + '"]'); if (d && e) e.innerHTML = '<img src="' + d + '" alt="">'; });
+  const ids = rows.filter(s => s.FotoMasuk && !S.foto[s.ID + '|m']).map(s => s.ID); put(); if (!ids.length) return;
+  call('fotoBatch', { ids, jenis: 'masuk' }).then(o => { Object.keys(o).forEach(k => S.foto[k + '|m'] = o[k]); put(); }).catch(() => {});
+}
+function fSiswa(id) {
+  const s = id ? S.d.siswa.find(x => x.ID === id) : { Status: 'Aktif', JK: 'L', Agama: 'Islam', KelasID: S.fk || (myKelas()[0] || {}).ID };
+  const wali = S.d.user.role === 'wali';
+  modal(`<h3>${id ? 'Ubah' : 'Tambah'} Siswa</h3><form id="sf" class="fg" novalidate>${SF.map(f => {
+    const [k, lb, t, o] = f, v = s[k] === undefined ? '' : s[k], full = t === 'full' ? ' full' : '';
+    let inp = `<input class="in${k === 'NISN' || k === 'NIK' || k === 'NIPD' ? ' mono' : ''}" name="${k}" value="${esc(v)}"${k === 'NIK' && wali ? ' disabled' : ''}>`;
+    if (t === 'sel') inp = `<select class="in" name="${k}">${opt(o, v)}</select>`;
+    if (t === 'kelas') inp = `<select class="in" name="${k}">${opt(myKelas().map(x => [x.ID, x.Nama]), v)}</select>`;
+    return `<div class="${full}"><label>${lb}</label>${inp}</div>`;
+  }).join('')}<div class="full row mt" style="justify-content:flex-end"><button type="button" class="btn" onclick="closeM()">BATAL</button><button class="btn p" type="submit">SIMPAN</button></div></form>`);
+  $('sf').addEventListener('submit', e => { e.preventDefault(); svSiswa(id); });
+}
+function svSiswa(id) {
+  const r = { ID: id || uid() }; new FormData($('sf')).forEach((v, k) => r[k] = String(v).trim());
+  const bad = []; ['Nama', 'NIPD', 'NISN'].forEach(k => { if (!r[k]) bad.push(k); });
+  qa('#sf .in').forEach(e => e.classList.remove('bad'));
+  if (!bad.length && !/^\d{10}$/.test(r.NISN)) bad.push('NISN');
+  if (r.NIK && !/^\d{16}$/.test(r.NIK)) bad.push('NIK');
+  if (bad.length) { bad.forEach(k => { const e = document.querySelector('#sf [name=' + k + ']'); if (e) e.classList.add('bad'); }); toast('Periksa isian: ' + bad.join(', '), 'err'); return; }
+  if (S.d.siswa.some(x => x.ID !== r.ID && (x.NISN === r.NISN || x.NIPD === r.NIPD))) { toast('NISN atau NIPD sudah dipakai', 'err'); return; }
+  const i = S.d.siswa.findIndex(x => x.ID === r.ID), before = i > -1 ? Object.assign({}, S.d.siswa[i]) : null;
+  if (i > -1) Object.assign(S.d.siswa[i], r); else S.d.siswa.push(Object.assign({ Lulus: '' }, r));   // UI langsung berubah
+  sList(); rDash(); closeM(); toast('Data disimpan');
+  call('saveSiswa', r).catch(e => { if (before) Object.assign(S.d.siswa[i], before); else S.d.siswa = S.d.siswa.filter(x => x.ID !== r.ID); sList(); rDash(); toast('Gagal menyimpan: ' + e.message, 'err'); });
+}
+function xSiswa(id) {
+  const s = S.d.siswa.find(x => x.ID === id);
+  confirmBox(`Hapus <b>${esc(s.Nama)}</b> beserta seluruh nilainya? Tindakan ini tidak dapat dibatalkan.`, () => {
+    const keep = S.d.siswa.slice(); S.d.siswa = S.d.siswa.filter(x => x.ID !== id); sList(); rDash();
+    call('delSiswa', { ids: [id] }).then(() => toast('Siswa dihapus')).catch(e => { S.d.siswa = keep; sList(); rDash(); toast(e.message, 'err'); });
+  }, 1);
+}
+
+/* ---------- MASTER DATA generik (program, kelas, mapel, pengguna) ---------- */
+const MF = {
+  program: { sh: 'Program', t: 'Program Keahlian', mod: 'master', k: 'program', c: [['Kode', 'Kode'], ['Nama', 'Nama program']], f: [['Kode', 'Kode'], ['Nama', 'Nama']] },
+  kelas: { sh: 'Kelas', t: 'Kelas / Rombel', mod: 'master', k: 'kelas', c: [['Nama', 'Kelas'], ['Tingkat', 'Tingkat'], ['ProgramID', 'Program', v => (S.Pr[v] || {}).Kode], ['Wali', 'Wali kelas', v => (S.U[v] || {}).Nama || v]], f: [['Nama', 'Nama kelas'], ['Tingkat', 'Tingkat', 'sel', ['X', 'XI', 'XII'].map(a => [a, a])], ['ProgramID', 'Program', 'ref', () => S.d.program.map(p => [p.ID, p.Kode])], ['Wali', 'Wali kelas', 'ref', () => Object.values(S.U).filter(u => u.Role === 'wali').map(u => [u.Username, u.Nama]), 1]] },
+  mapel: { sh: 'Mapel', t: 'Mata Pelajaran', mod: 'master', k: 'mapel', c: [['Kode', 'Kode'], ['Nama', 'Mata pelajaran'], ['Kelompok', 'Kel.'], ['KKTP', 'KKTP', null, 1], ['Tingkat', 'Tingkat']], f: [['Kode', 'Kode'], ['Nama', 'Nama'], ['Kelompok', 'Kelompok', 'sel', ['A', 'B', 'C'].map(a => [a, a])], ['KKTP', 'KKTP (0-100)'], ['Tingkat', 'Tingkat', 'sel', ['X', 'XI', 'XII'].map(a => [a, a])]] },
+  users: { sh: 'Users', t: 'Manajemen Pengguna', mod: 'user', k: 'users', c: [['Username', 'Username'], ['Nama', 'Nama'], ['Role', 'Peran', v => ROLE[v]], ['Aktif', 'Status', v => String(v) === '1' ? 'AKTIF' : 'NONAKTIF']], f: [['Username', 'Username'], ['Nama', 'Nama'], ['Role', 'Peran', 'sel', Object.keys(ROLE).map(r => [r, ROLE[r]])], ['Password', 'Kata sandi (kosongkan jika tidak diubah)', 'pw'], ['Aktif', 'Status', 'sel', [['1', 'Aktif'], ['0', 'Nonaktif']]], ['Mapel', 'ID mapel diampu (pisah koma)'], ['Kelas', 'ID kelas (pisah koma)']] }
+};
+const mrows = k => k === 'users' ? (S.d.users || []) : S.d[k];
+function rMaster(k) {
+  const m = MF[k], el = $('s-' + k); if (!P(m.mod)) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="head"><h2>${m.t}</h2>${has(m.mod, 'T') ? `<button class="btn p" onclick="fMaster('${k}')">+ TAMBAH</button>` : ''}</div>
+  <div class="tw"><table><thead><tr>${m.c.map(c => `<th${c[3] ? ' class="n"' : ''}>${c[1]}</th>`).join('')}<th></th></tr></thead><tbody>${mrows(k).map(r => `<tr>${m.c.map(c => `<td${c[3] ? ' class="n"' : ''}>${esc(c[2] ? c[2](r[c[0]]) : r[c[0]])}</td>`).join('')}<td style="white-space:nowrap">${has(m.mod, 'U') ? `<button class="btn sm" onclick="fMaster('${k}','${r.ID}')">UBAH</button> ` : ''}${has(m.mod, 'H') ? `<button class="btn sm d" onclick="xMaster('${k}','${r.ID}')">HAPUS</button>` : ''}</td></tr>`).join('') || `<tr><td colspan="9" class="muted">Belum ada data.</td></tr>`}</tbody></table></div>`;
+}
+function fMaster(k, id) {
+  const m = MF[k], r = id ? mrows(k).find(x => x.ID === id) : { Aktif: '1' };
+  modal(`<h3>${id ? 'Ubah' : 'Tambah'} ${m.t}</h3><form id="mf" class="fg" novalidate>${m.f.map(f => {
+    const [n, lb, t, o, blank] = f, v = r[n] === undefined ? '' : r[n];
+    const inp = t === 'sel' ? `<select class="in" name="${n}">${opt(o, v)}</select>` : t === 'ref' ? `<select class="in" name="${n}">${opt(o(), v, blank ? '(kosong)' : '')}</select>` : `<input class="in" name="${n}" type="${t === 'pw' ? 'password' : 'text'}" value="${t === 'pw' ? '' : esc(v)}" autocomplete="off">`;
+    return `<div class="${t === 'pw' ? 'full' : ''}"><label>${lb}</label>${inp}</div>`;
+  }).join('')}<div class="full row mt" style="justify-content:flex-end"><button type="button" class="btn" onclick="closeM()">BATAL</button><button class="btn p" type="submit">SIMPAN</button></div></form>`);
+  $('mf').addEventListener('submit', e => { e.preventDefault(); svMaster(k, id); });
+}
+function svMaster(k, id) {
+  const m = MF[k], rec = { ID: id || '' }; new FormData($('mf')).forEach((v, n) => rec[n] = String(v).trim());
+  if (k === 'mapel' && rec.KKTP && !(rec.KKTP >= 0 && rec.KKTP <= 100)) { toast('KKTP harus 0 sampai 100', 'err'); return; }
+  if (k === 'users' && !id && !rec.Password) { toast('Kata sandi wajib untuk akun baru', 'err'); return; }
+  closeM(); toast('Menyimpan...');
+  call('saveMaster', { sheet: m.sh, rec }).then(() => refresh()).then(() => toast('Tersimpan')).catch(e => toast(e.message, 'err'));
+}
+function xMaster(k, id) {
+  confirmBox('Hapus data ini? Data yang masih dipakai tidak dapat dihapus.', () => call('delMaster', { sheet: MF[k].sh, id }).then(() => refresh()).then(() => toast('Dihapus')).catch(e => toast(e.message, 'err')), 1);
+}
+
+/* ---------- NILAI: grid instan, hitung lokal, simpan batch ---------- */
+const avgN = a => { const v = a.filter(x => x !== '').map(Number); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+const finN = (tp, s) => { const a = avgN(tp); return (a == null || s === '') ? '' : Math.round((.6 * a + .4 * Number(s)) * 10) / 10; };
+function rNilai() {
+  if (!P('nilai')) { $('s-nilai').innerHTML = ''; return; }
+  const sel = S.nsel, ks = myKelas();
+  $('s-nilai').innerHTML = `<div class="head"><h2>Penilaian &amp; Rapor</h2>${S.d.user.role === 'admin' ? '<button class="btn" onclick="fImporN()">IMPOR NILAI</button>' : ''}</div><div class="card"><div class="fg">
+   <div><label>Rombel</label><select id="nk" class="in">${opt(ks.map(k => [k.ID, k.Nama]), sel.k)}</select></div>
+   <div><label>Mata pelajaran</label><select id="nm" class="in">${opt(S.d.mapel.map(m => [m.ID, m.Nama]), sel.m)}</select></div>
+   <div><label>Semester</label><select id="ne" class="in">${opt([1, 2, 3, 4, 5, 6].map(x => [x, 'Semester ' + x]), sel.e || S.d.sekolah.Semester)}</select></div>
+   <div style="align-self:end"><button class="btn p wide" onclick="nLoad()">TAMPILKAN</button></div></div></div><div id="nb" class="mt"></div>`;
+  if (S.nl) nRender();
+}
+function nLoad() {
+  const k = $('nk').value, m = $('nm').value, e = $('ne').value; if (!k || !m) { toast('Pilih rombel dan mapel', 'err'); return; }
+  S.nsel = { k, m, e };
+  $('nb').innerHTML = '<p class="muted mono">Memuat nilai...</p>';
+  call('getNilai', { kelas: k, mapel: m, sem: e }).then(r => {
+    const sis = S.d.siswa.filter(s => s.KelasID === k && s.Status === 'Aktif'), key = `sd_dr_${k}_${m}_${e}`;
+    let dr = {}; try { dr = JSON.parse(localStorage.getItem(key) || '{}'); } catch (x) {}
+    S.nl = { k, m, e, key, edit: r.edit, rows: sis.map(s => { const v = r.rows[s.ID] || { tp: ['', '', '', ''], sas: '', kunci: false }; return { id: s.ID, nama: s.Nama, nisn: s.NISN, tp: v.tp.map(x => x === null ? '' : x), sas: v.sas === null ? '' : v.sas, kunci: v.kunci }; }), dirty: {} };
+    S.nl.rows.forEach(x => { if (dr[x.id] && !x.kunci) { x.tp = dr[x.id].tp; x.sas = dr[x.id].sas; S.nl.dirty[x.id] = 1; } });
+    nRender();
+  }).catch(e => { $('nb').innerHTML = ''; toast(e.message, 'err'); });
+}
+function nRender() {
+  const L = S.nl, kktp = Number((S.M[L.m] || {}).KKTP) || 75, locked = L.rows.length && L.rows.every(x => x.kunci), cell = (i, k, v, d) => `<td><input class="in ni" inputmode="numeric" value="${esc(v)}" ${d ? 'disabled' : ''} oninput="nIn(${i},'${k}',this)" aria-label="${k}"></td>`;
+  $('nb').innerHTML = `<div class="grid g4"><div class="card kpi"><div class="lb">TOTAL_SISWA</div><div class="v">${L.rows.length}</div></div><div class="card kpi"><div class="lb">TUNTAS_KKTP (${kktp})</div><div class="v" id="nk1">-</div></div><div class="card kpi"><div class="lb">RATA_RATA_KELAS</div><div class="v" id="nk2">-</div></div><div class="card kpi"><div class="lb">STATUS</div><div class="v" style="font-size:18px">${locked ? 'TERKUNCI' : (L.edit ? 'TERBUKA' : 'LIHAT SAJA')}</div></div></div>
+  <div class="tw mt"><table><thead><tr><th class="n">No</th><th>Siswa</th><th class="n">TP1</th><th class="n">TP2</th><th class="n">TP3</th><th class="n">TP4</th><th class="n">Rata TP</th><th class="n">SAS</th><th class="n">Rapor</th></tr></thead><tbody>${L.rows.map((x, i) => { const d = !L.edit || x.kunci; return `<tr id="nr${i}"><td class="n">${i + 1}</td><td><b>${esc(x.nama)}</b><br><span class="mono tiny muted">${esc(x.nisn)}</span></td>${[0, 1, 2, 3].map(j => cell(i, 'tp' + j, x.tp[j], d)).join('')}<td class="n" id="na${i}"></td>${cell(i, 'sas', x.sas, d)}<td class="n" id="nf${i}"><b></b></td></tr>`; }).join('') || '<tr><td colspan="9" class="muted">Tidak ada siswa aktif di rombel ini.</td></tr>'}</tbody></table></div>
+  <div class="row mt" style="justify-content:flex-end">${L.edit ? '<button class="btn p" onclick="nSave()" id="nsb">SIMPAN NILAI</button>' : ''}${S.d.user.role === 'guru' && locked ? '<button class="btn" onclick="nReq()">AJUKAN BUKA KUNCI</button>' : ''}${has('proses', 'T') && !locked ? '<button class="btn" onclick="nKunci(1)">KUNCI SEMESTER</button>' : ''}${(S.d.user.role === 'admin' || S.d.user.role === 'kepsek') && L.rows.some(x => x.kunci) ? '<button class="btn d" onclick="nKunci(0)">BUKA KUNCI</button>' : ''}</div>
+  <p class="mono tiny muted">Rapor = 60% rata formatif TP + 40% SAS. Perubahan tersimpan sebagai draf di perangkat sampai Anda menekan SIMPAN.</p>${reqLine()}`;
+  L.rows.forEach((x, i) => nCalc(i)); nKpi();
+}
+function nCalc(i) {
+  const x = S.nl.rows[i], a = avgN(x.tp), f = finN(x.tp, x.sas), kktp = Number((S.M[S.nl.m] || {}).KKTP) || 75;
+  $('na' + i).textContent = a == null ? '--' : a.toFixed(1); $('nf' + i).firstChild.textContent = f === '' ? '--' : f.toFixed(1);
+  $('nr' + i).classList.toggle('low', f !== '' && f < kktp);
+}
+function nKpi() {
+  const kktp = Number((S.M[S.nl.m] || {}).KKTP) || 75, fs = S.nl.rows.map(x => finN(x.tp, x.sas)).filter(x => x !== '');
+  $('nk1').textContent = fs.filter(x => x >= kktp).length + '/' + fs.length; $('nk2').textContent = fs.length ? (fs.reduce((s, x) => s + x, 0) / fs.length).toFixed(1) : '-';
+}
+function nIn(i, k, el) {
+  const x = S.nl.rows[i], v = el.value.trim(), ok = v === '' || (/^\d{1,3}(\.\d)?$/.test(v) && Number(v) <= 100);
+  el.classList.toggle('bad', !ok); if (!ok) return;
+  if (k === 'sas') x.sas = v; else x.tp[+k.slice(2)] = v;
+  S.nl.dirty[x.id] = 1; nCalc(i); nKpi();
+  const dr = {}; S.nl.rows.forEach(r => { if (S.nl.dirty[r.id]) dr[r.id] = { tp: r.tp, sas: r.sas }; });
+  try { localStorage.setItem(S.nl.key, JSON.stringify(dr)); } catch (e) {}
+}
+function nSave() {
+  const L = S.nl; if (qa('.ni.bad').length) { toast('Perbaiki nilai yang berwarna merah (0 sampai 100)', 'err'); return; }
+  const ids = Object.keys(L.dirty); if (!ids.length) { toast('Tidak ada perubahan'); return; }
+  const rows = L.rows.filter(x => L.dirty[x.id]).map(x => ({ id: x.id, tp: x.tp, sas: x.sas })), snap = Object.assign({}, L.dirty);
+  L.dirty = {}; toast(rows.length + ' nilai dikirim...');
+  call('saveNilai', { kelas: L.k, mapel: L.m, sem: L.e, rows }).then(r => {
+    try { localStorage.removeItem(L.key); } catch (e) {}
+    toast(r.saved + ' nilai tersimpan' + (r.skipped.length ? ', ' + r.skipped.length + ' terkunci dilewati' : ''), r.skipped.length ? 'err' : '');
+    call('boot').then(d => { S.d = d; ss_.set('sd_boot', JSON.stringify(d)); rDash(); });
+  }).catch(e => { Object.assign(L.dirty, snap); toast('Gagal menyimpan, draf tetap aman di perangkat: ' + e.message, 'err'); });
+}
+function nKunci(on) {
+  const L = S.nl;
+  confirmBox(on ? 'Kunci nilai rombel ini untuk semester terpilih? Nilai tidak dapat diubah guru setelah dikunci.' : 'Buka kunci nilai rombel ini?', () => {
+    L.rows.forEach(x => x.kunci = !!on); nRender();
+    call('setKunci', { kelas: L.k, sem: L.e, kunci: !!on }).then(() => toast(on ? 'Semester dikunci' : 'Kunci dibuka')).catch(e => { L.rows.forEach(x => x.kunci = !on); nRender(); toast(e.message, 'err'); });
+  });
+}
+
+/* ---------- PROSES MASSAL: naik kelas, lulus, mutasi ---------- */
+function rProses() {
+  if (!P('proses')) { $('s-proses').innerHTML = ''; return; }
+  const ed = has('proses', 'U'), tabs = [];
+  if (ed) tabs.push(['naik', 'KENAIKAN KELAS'], ['lulus', 'KELULUSAN XII'], ['mut', 'MUTASI']);
+  tabs.push(['val', 'VALIDASI LULUS'], ['req', 'BUKA KUNCI']);
+  if (!tabs.some(x => x[0] === S.tab)) S.tab = tabs[0][0];
+  $('s-proses').innerHTML = `<div class="head"><h2>Proses Massal</h2></div><div class="tabs">${tabs.map(x => `<button class="tab ${S.tab === x[0] ? 'on' : ''}" onclick="S.tab='${x[0]}';rProses()">${x[1]}</button>`).join('')}</div><div class="card" id="pb"></div>`;
+  ({ naik: pNaik, lulus: pLulus, mut: pMut, val: pVal, req: pReq })[S.tab](ed);
+}
+function pVal() {
+  const V = has('proses', 'V'), l = S.d.siswa.filter(s => s.Status === 'Lulus');
+  $('pb').innerHTML = `<div class="tw"><table><thead><tr>${V ? '<th></th>' : ''}<th>NISN</th><th>Nama</th><th>Kelas</th><th>Tgl lulus</th><th>Validasi</th></tr></thead><tbody>${l.map(s => `<tr>${V ? `<td>${s.Valid === '1' ? '' : `<input class="pc" type="checkbox" value="${s.ID}" checked aria-label="Pilih ${esc(s.Nama)}">`}</td>` : ''}<td class="mono">${esc(s.NISN)}</td><td><b>${esc(s.Nama)}</b></td><td>${esc(kName(s.KelasID))}</td><td class="mono">${esc(s.Lulus)}</td><td><span class="badge ${s.Valid === '1' ? 'solid' : 'hatch'}">${s.Valid === '1' ? 'TERVERIFIKASI' : 'MENUNGGU'}</span></td></tr>`).join('') || '<tr><td colspan="6" class="muted">Belum ada siswa yang diluluskan.</td></tr>'}</tbody></table></div>
+  ${V ? '<div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="doVal()">VALIDASI TERPILIH</button></div>' : ''}<p class="mono tiny muted">SKL hanya dapat dicetak setelah kelulusan divalidasi Kepala Sekolah.</p>`;
+}
+function doVal() {
+  const ids = picked(); if (!ids.length) { toast('Pilih minimal satu siswa', 'err'); return; }
+  confirmBox(`Validasi kelulusan <b>${ids.length}</b> siswa?`, () => {
+    S.d.siswa.forEach(s => { if (ids.indexOf(s.ID) > -1) s.Valid = '1'; }); rProses(); rSiswa();
+    call('validasiLulus', { ids }).then(() => toast(ids.length + ' siswa divalidasi')).catch(e => { toast(e.message, 'err'); refresh(); });
+  });
+}
+function pReq() {
+  const rows = (S.d.req || []).slice().reverse(), dec = S.d.user.role === 'admin' || S.d.user.role === 'kepsek';
+  $('pb').innerHTML = `<div class="tw"><table><thead><tr><th>Kelas</th><th class="n">Smt</th><th>Pemohon</th><th>Alasan</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(kName(r.Kelas))}</td><td class="n">${esc(r.Semester)}</td><td>${esc(r.Pemohon)}</td><td>${esc(r.Alasan)}</td><td><span class="badge ${r.Status === 'Disetujui' ? 'solid' : (r.Status === 'Ditolak' ? 'err' : 'hatch')}">${esc(r.Status)}</span></td><td style="white-space:nowrap">${dec && r.Status === 'Menunggu' ? `<button class="btn sm" onclick="decide('${r.ID}',1)">SETUJUI</button> <button class="btn sm d" onclick="decide('${r.ID}',0)">TOLAK</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Belum ada permintaan.</td></tr>'}</tbody></table></div>`;
+}
+function decide(id, ok) {
+  confirmBox(ok ? 'Setujui dan buka kunci nilai kelas ini?' : 'Tolak permintaan ini?', () => {
+    const r = S.d.req.find(x => x.ID === id); r.Status = ok ? 'Disetujui' : 'Ditolak'; pReq();
+    call('decideReq', { id, setuju: !!ok }).then(() => toast(ok ? 'Kunci dibuka' : 'Permintaan ditolak')).catch(e => { toast(e.message, 'err'); refresh(); });
+  });
+}
+const reqLine = () => { const L = S.nl, r = (S.d.req || []).filter(x => x.Kelas === L.k && String(x.Semester) === String(L.e)).pop(); return r ? `<p class="mono tiny">Permintaan buka kunci: <b>${esc(r.Status)}</b></p>` : ''; };
+function nReq() {
+  const L = S.nl;
+  modal(`<h3>Ajukan Buka Kunci</h3><p class="muted">${esc(kName(L.k))}, semester ${esc(L.e)}. Diputuskan oleh Admin atau Kepala Sekolah.</p><label>Alasan</label><textarea id="rq" class="in" rows="3"></textarea><div class="row mt" style="justify-content:flex-end"><button class="btn" onclick="closeM()">BATAL</button><button class="btn p" onclick="sendReq()">KIRIM</button></div>`);
+}
+function sendReq() {
+  const a = $('rq').value.trim(); if (a.length < 5) { toast('Tulis alasan (minimal 5 karakter)', 'err'); return; }
+  const L = S.nl; closeM();
+  call('reqBukaKunci', { kelas: L.k, sem: L.e, alasan: a }).then(() => refresh()).then(() => toast('Permintaan terkirim')).catch(e => toast(e.message, 'err'));
+}
+
+function pList(kid, extra) {
+  const l = S.d.siswa.filter(s => s.KelasID === kid && s.Status === 'Aktif');
+  return `<div class="row between mt"><b>${l.length} siswa aktif</b><label class="row" style="margin:0"><input type="checkbox" checked onchange="qa('.pc').forEach(c=>c.checked=this.checked)"> Pilih semua</label></div>` +
+    (l.map(s => `<label class="chk"><input class="pc" type="checkbox" value="${s.ID}" checked><span><b>${esc(s.Nama)}</b> <span class="mono tiny muted">${esc(s.NISN)}${extra ? extra(s) : ''}</span></span></label>`).join('') || '<p class="muted">Tidak ada siswa aktif.</p>');
+}
+const picked = () => qa('.pc:checked').map(c => c.value);
+function pNaik(ed) {
+  const f = S.pf || (S.pf = { a: '', b: '' });
+  $('pb').innerHTML = `<div class="fg"><div><label>Kelas asal</label><select id="pa" class="in" onchange="S.pf.a=this.value;pNaik(${ed})">${opt(S.d.kelas.map(k => [k.ID, k.Nama]), f.a, 'Pilih kelas asal')}</select></div><div><label>Kelas tujuan</label><select id="pt" class="in" onchange="S.pf.b=this.value">${opt(S.d.kelas.map(k => [k.ID, k.Nama]), f.b, 'Pilih kelas tujuan')}</select></div></div>${f.a ? pList(f.a) : ''}
+  ${ed ? '<div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="doNaik()">PROSES KENAIKAN</button></div>' : ''}`;
+}
+function doNaik() {
+  const a = $('pa').value, b = $('pt').value, ids = picked(); if (!a || !b || a === b) { toast('Pilih kelas asal dan tujuan yang berbeda', 'err'); return; } if (!ids.length) { toast('Pilih minimal satu siswa', 'err'); return; }
+  confirmBox(`Pindahkan <b>${ids.length}</b> siswa dari <b>${esc(kName(a))}</b> ke <b>${esc(kName(b))}</b>?`, () => {
+    const keep = JSON.stringify(S.d.siswa); S.d.siswa.forEach(s => { if (ids.indexOf(s.ID) > -1) s.KelasID = b; }); S.pf.a = ''; rProses(); rSiswa(); rDash();
+    call('naikKelas', { ids, to: b }).then(() => toast(ids.length + ' siswa dipindahkan')).catch(e => { S.d.siswa = JSON.parse(keep); rProses(); rSiswa(); rDash(); toast(e.message, 'err'); });
+  });
+}
+function pLulus(ed) {
+  const f = S.pf || (S.pf = { a: '', b: '' }), x12 = S.d.kelas.filter(k => k.Tingkat === 'XII');
+  const warn = s => { const m = []; if (!s.NIK) m.push('NIK'); if (!s.Ibu && !s.Ayah) m.push('ortu'); return m.length ? ' | BELUM LENGKAP: ' + m.join(', ') : ''; };
+  $('pb').innerHTML = `<div class="fg"><div><label>Rombel kelas XII</label><select id="pa" class="in" onchange="S.pf.a=this.value;pLulus(${ed})">${opt(x12.map(k => [k.ID, k.Nama]), f.a, 'Pilih rombel')}</select></div><div><label>Tanggal lulus</label><input id="pd" class="in mono" type="date"></div></div>${f.a ? pList(f.a, warn) : ''}
+  ${ed ? '<div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="doLulus()">LULUSKAN SISWA TERPILIH</button></div>' : ''}<p class="mono tiny muted">Status berubah menjadi Lulus dan siswa masuk arsip alumni (filter status di Manajemen Siswa).</p>`;
+}
+function doLulus() {
+  const ids = picked(), tg = $('pd').value; if (!tg) { toast('Isi tanggal lulus', 'err'); return; } if (!ids.length) { toast('Pilih minimal satu siswa', 'err'); return; }
+  const inc = S.d.siswa.filter(s => ids.indexOf(s.ID) > -1 && !s.NIK).length;
+  confirmBox(`Luluskan <b>${ids.length}</b> siswa?${inc ? `<br><span style="color:var(--err)">${inc} siswa belum memiliki NIK.</span>` : ''}`, () => {
+    const keep = JSON.stringify(S.d.siswa); S.d.siswa.forEach(s => { if (ids.indexOf(s.ID) > -1) { s.Status = 'Lulus'; s.Lulus = tg; s.Valid = ''; } }); rProses(); rSiswa(); rDash();
+    call('lulus', { ids, tanggal: tg }).then(() => toast(ids.length + ' siswa diluluskan')).catch(e => { S.d.siswa = JSON.parse(keep); rProses(); rSiswa(); rDash(); toast(e.message, 'err'); });
+  });
+}
+function pMut(ed) {
+  const f = S.pf || (S.pf = { a: '', b: '' });
+  $('pb').innerHTML = `<div class="fg"><div><label>Kelas</label><select id="pa" class="in" onchange="S.pf.a=this.value;pMut(${ed})">${opt(S.d.kelas.map(k => [k.ID, k.Nama]), f.a, 'Pilih kelas')}</select></div>
+  <div><label>Siswa</label><select id="ps" class="in">${opt(S.d.siswa.filter(s => s.KelasID === f.a && s.Status === 'Aktif').map(s => [s.ID, s.Nama]), '', 'Pilih siswa')}</select></div>
+  <div><label>Jenis</label><select id="pj" class="in">${opt([['Pindah', 'Pindah sekolah'], ['Keluar', 'Keluar / berhenti']], '')}</select></div><div><label>Tanggal</label><input id="pd" class="in mono" type="date"></div>
+  <div><label>Sekolah tujuan</label><input id="pu" class="in"></div><div><label>Alasan</label><input id="pr" class="in"></div></div>
+  ${ed ? '<div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="doMut()">PROSES MUTASI</button></div>' : ''}`;
+}
+function doMut() {
+  const id = $('ps').value, p = { id, jenis: $('pj').value, tanggal: $('pd').value, tujuan: $('pu').value.trim(), alasan: $('pr').value.trim() };
+  if (!id || !p.tanggal) { toast('Pilih siswa dan isi tanggal', 'err'); return; }
+  const s = S.d.siswa.find(x => x.ID === id);
+  confirmBox(`Proses <b>${esc(s.Nama)}</b> sebagai <b>${p.jenis}</b>?`, () => {
+    const old = s.Status; s.Status = p.jenis; rProses(); rSiswa(); rDash();
+    call('mutasi', p).then(() => toast('Mutasi diproses')).catch(e => { s.Status = old; rProses(); rSiswa(); rDash(); toast(e.message, 'err'); });
+  });
+}
+
+/* ---------- CATATAN WALI: ketidakhadiran, ekskul, catatan ---------- */
+function rCatatan() {
+  if (!P('catatan')) { $('s-catatan').innerHTML = ''; return; }
+  const s = S.csel;
+  $('s-catatan').innerHTML = `<div class="head"><h2>Catatan Wali Kelas</h2></div><div class="card"><div class="fg"><div><label>Rombel</label><select id="ck" class="in">${opt(myKelas().map(k => [k.ID, k.Nama]), s.k)}</select></div><div><label>Semester</label><select id="ce" class="in">${opt([1, 2, 3, 4, 5, 6].map(x => [x, 'Semester ' + x]), s.e || S.d.sekolah.Semester)}</select></div><div style="align-self:end"><button class="btn p wide" onclick="cLoad()">TAMPILKAN</button></div></div></div><div id="cb" class="mt"></div>`;
+  if (S.cl) cRender();
+}
+function cLoad() {
+  const k = $('ck').value, e = $('ce').value; if (!k) { toast('Pilih rombel', 'err'); return; }
+  S.csel = { k, e }; $('cb').innerHTML = '<p class="muted mono">Memuat...</p>';
+  call('getCatatan', { kelas: k, sem: e }).then(o => {
+    S.cl = { k, e, edit: has('catatan', 'U'), dirty: {}, rows: S.d.siswa.filter(s => s.KelasID === k && s.Status === 'Aktif').map(s => { const c = o[s.ID] || {}; return { id: s.ID, nama: s.Nama, Sakit: c.Sakit == null ? '' : c.Sakit, Izin: c.Izin == null ? '' : c.Izin, Alfa: c.Alfa == null ? '' : c.Alfa, Ekskul: c.Ekskul || '', Catatan: c.Catatan || '' }; }) };
+    cRender();
+  }).catch(e => { $('cb').innerHTML = ''; toast(e.message, 'err'); });
+}
+function cRender() {
+  const L = S.cl, d = L.edit ? '' : 'disabled', n = (i, k) => `<td><input class="in ni" inputmode="numeric" value="${esc(L.rows[i][k])}" ${d} oninput="cIn(${i},'${k}',this)" aria-label="${k}"></td>`;
+  $('cb').innerHTML = `<div class="tw"><table><thead><tr><th class="n">No</th><th>Siswa</th><th class="n">Sakit</th><th class="n">Izin</th><th class="n">Alfa</th><th>Ekskul</th><th>Catatan wali</th></tr></thead><tbody>${L.rows.map((x, i) => `<tr><td class="n">${i + 1}</td><td><b>${esc(x.nama)}</b></td>${n(i, 'Sakit')}${n(i, 'Izin')}${n(i, 'Alfa')}<td><input class="in" style="min-width:140px" value="${esc(x.Ekskul)}" ${d} oninput="cIn(${i},'Ekskul',this)" aria-label="Ekskul"></td><td><input class="in" style="min-width:220px" value="${esc(x.Catatan)}" ${d} maxlength="500" oninput="cIn(${i},'Catatan',this)" aria-label="Catatan"></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Tidak ada siswa aktif.</td></tr>'}</tbody></table></div>${L.edit ? '<div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="cSave()">SIMPAN CATATAN</button></div>' : ''}`;
+}
+function cIn(i, k, el) {
+  const v = el.value.trim(), num = k === 'Sakit' || k === 'Izin' || k === 'Alfa', ok = !num || v === '' || (/^\d{1,3}$/.test(v) && +v <= 366);
+  el.classList.toggle('bad', !ok); if (!ok) return;
+  S.cl.rows[i][k] = v; S.cl.dirty[S.cl.rows[i].id] = 1;
+}
+function cSave() {
+  const L = S.cl; if (qa('#cb .bad').length) { toast('Perbaiki isian berwarna merah', 'err'); return; }
+  const rows = L.rows.filter(x => L.dirty[x.id]); if (!rows.length) { toast('Tidak ada perubahan'); return; }
+  const snap = Object.assign({}, L.dirty); L.dirty = {}; toast(rows.length + ' catatan dikirim...');
+  call('saveCatatan', { kelas: L.k, sem: L.e, rows }).then(r => toast(r + ' catatan tersimpan')).catch(e => { Object.assign(L.dirty, snap); toast('Gagal: ' + e.message, 'err'); });
+}
+
+/* ---------- KONFIGURASI INSTANSI ---------- */
+const SK = [['NamaSekolah', 'Nama sekolah'], ['NPSN', 'NPSN'], ['NSS', 'NSS'], ['Dinas', 'Instansi induk (kop)'], ['Alamat', 'Alamat'], ['Telp', 'Telepon'], ['Email', 'Email'], ['Kota', 'Kota (tempat TTD)'], ['KepalaSekolah', 'Kepala sekolah'], ['NIPKepsek', 'NIP kepala sekolah'], ['TahunAjaran', 'Tahun ajaran'], ['Semester', 'Semester aktif (1-6)']];
+function rSekolah() {
+  if (!P('sekolah')) { $('s-sekolah').innerHTML = ''; return; }
+  const ed = has('sekolah', 'U'), k = S.d.sekolah;
+  $('s-sekolah').innerHTML = `<div class="head"><h2>Konfigurasi Instansi</h2></div><form id="sk_f" class="card fg" novalidate>${SK.map(x => `<div><label>${x[1]}</label><input class="in" name="${x[0]}" value="${esc(k[x[0]])}" ${ed ? '' : 'disabled'}></div>`).join('')}${ed ? '<div class="full row mt" style="justify-content:flex-end"><button class="btn p" type="submit">SIMPAN</button></div>' : ''}</form>`;
+  $('sk_f').addEventListener('submit', e => {
+    e.preventDefault(); const d = {}; new FormData($('sk_f')).forEach((v, n) => d[n] = String(v).trim());
+    Object.assign(S.d.sekolah, d); rDash(); toast('Disimpan');
+    call('saveSekolah', { data: d }).catch(x => toast(x.message, 'err'));
+  });
+}
+
+/* ---------- CETAK: buku induk, transkrip, SKL; satuan atau massal per kelas ---------- */
+const tgl = () => new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+const kopH = () => { const k = S.d.sekolah; return `<div class="kop"><b>${esc(k.Dinas)}</b><b class="s">${esc(k.NamaSekolah)}</b><span style="font-size:11px">${esc(k.Alamat)}<br>Telp. ${esc(k.Telp)} | ${esc(k.Email)} | NPSN: ${esc(k.NPSN)}</span></div>`; };
+const sigH = () => { const k = S.d.sekolah; return `<div class="sig">${esc(k.Kota)}, ${tgl()}<br>Kepala ${esc(k.NamaSekolah)},<br><br><br><br><b><u>${esc(k.KepalaSekolah)}</u></b><br>NIP. ${esc(k.NIPKepsek)}</div>`; };
+const phH = ft => `<div class="ph">${ft ? `<img src="${ft}" alt="Pas foto">` : '<span>[ 3 x 4 FOTO ]</span>'}</div>`;
+const rowH = (n, l, v) => `<tr><td style="width:7mm">${n}.</td><td style="width:55mm">${l}</td><td style="width:3mm">:</td><td>${esc(v) || '-'}</td></tr>`, secH = t => `<tr><td colspan="4" class="sec-t">${t}</td></tr>`;
+function pgInduk(s, ft) {
+  return `<div class="a4">${kopH()}<h4>LEMBAR BUKU INDUK PESERTA DIDIK</h4>
+  <table>${secH('A. KETERANGAN TENTANG DIRI PESERTA DIDIK')}${rowH(1, 'Nama lengkap', s.Nama)}${rowH(2, 'NIPD', s.NIPD)}${rowH(3, 'NISN', s.NISN)}${rowH(4, 'NIK', s.NIK)}${rowH(5, 'Tempat, tanggal lahir', s.TTL)}${rowH(6, 'Jenis kelamin / agama', (s.JK === 'L' ? 'Laki-laki' : 'Perempuan') + ' / ' + s.Agama)}${rowH(7, 'Alamat', s.Alamat)}${rowH(8, 'Program keahlian / kelas', prKode(s.KelasID) + ' / ' + kName(s.KelasID))}</table>
+  <table>${secH('B. KETERANGAN TENTANG ORANG TUA / WALI')}${rowH(1, 'Nama ayah', s.Ayah)}${rowH(2, 'Nama ibu', s.Ibu)}${rowH(3, 'Nama wali', s.Wali)}</table>
+  <table>${secH('C. KETERANGAN PERKEMBANGAN & PENDIDIKAN SEBELUMNYA')}${rowH(1, 'Sekolah asal', s.SMPAsal)}${rowH(2, 'No. ijazah SMP', s.IjazahSMP)}${rowH(3, 'Status', s.Status + (s.Lulus ? ' (' + s.Lulus + ')' : ''))}</table>
+  <div class="ttd">${phH(ft)}${sigH()}</div></div>`;
+}
+function pgNilai(s, n, judul) {
+  const sm = [1, 2, 3, 4, 5, 6], ada = S.d.mapel.filter(m => sm.some(e => n[m.ID + '|' + e] !== undefined)), ms = ada.length ? ada : S.d.mapel;
+  const body = ms.map((m, i) => { const v = sm.map(e => n[m.ID + '|' + e]), a = avgN(v.filter(x => x !== undefined)); return `<tr><td>${i + 1}</td><td>${esc(m.Nama)}</td>${v.map(x => `<td style="text-align:center">${x === undefined ? '' : Number(x).toFixed(1)}</td>`).join('')}<td style="text-align:center"><b>${a == null ? '' : a.toFixed(1)}</b></td></tr>`; }).join('');
+  const rs = sm.map(e => avgN(ms.map(m => n[m.ID + '|' + e]).filter(x => x !== undefined)));
+  return `<div class="a4">${kopH()}<h4>${judul}</h4><p>Nama: <b>${esc(s.Nama)}</b> &nbsp; NISN: ${esc(s.NISN)} &nbsp; Kelas: ${esc(kName(s.KelasID))}</p><table><thead><tr><th>No</th><th>Mata pelajaran</th>${sm.map(e => `<th>Sem ${e}</th>`).join('')}<th>Rata</th></tr></thead><tbody>${body}<tr><td colspan="2"><b>Rata-rata semester</b></td>${rs.map(x => `<td style="text-align:center"><b>${x == null ? '' : x.toFixed(1)}</b></td>`).join('')}<td></td></tr></tbody></table><div class="ttd"><span></span>${sigH()}</div></div>`;
+}
+function pgSkl(s, ft) {
+  const k = S.d.sekolah, th = String(k.TahunAjaran || '').split('/')[0];
+  return `<div class="a4">${kopH()}<h4>SURAT KETERANGAN LULUS</h4><p style="text-align:center">Nomor: SKL/${esc(s.NISN)}/${esc(th)}</p>
+  <p>Yang bertanda tangan di bawah ini, Kepala ${esc(k.NamaSekolah)}, menerangkan bahwa:</p>
+  <table>${rowH(1, 'Nama lengkap', s.Nama)}${rowH(2, 'Tempat, tanggal lahir', s.TTL)}${rowH(3, 'NISN', s.NISN)}${rowH(4, 'NIPD', s.NIPD)}${rowH(5, 'Program keahlian', prKode(s.KelasID))}</table>
+  <p>dinyatakan <b>LULUS</b> dari satuan pendidikan pada Tahun Ajaran ${esc(k.TahunAjaran)} (tanggal kelulusan ${esc(s.Lulus) || '-'}) sesuai kriteria kelulusan yang ditetapkan sekolah.</p>
+  <p>Surat keterangan ini berlaku sampai ijazah diterbitkan.</p><div class="ttd">${phH(ft)}${sigH()}</div></div>`;
+}
+const chunks = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+function cetak(ids, jenis) {
+  if (!ids.length) { toast('Tidak ada siswa untuk dicetak', 'err'); return; }
+  $('pvc').innerHTML = '<div class="a4"><p class="muted">Menyusun ' + ids.length + ' dokumen...</p></div>'; $('pv').hidden = false;
+  const fj = jenis === 'skl' ? 'tamat' : 'masuk';
+  Promise.all([jenis === 'skl' ? Promise.resolve({}) : Promise.all(chunks(ids, 80).map(c => call('nilaiKelas', { ids: c }))).then(a => Object.assign({}, ...a)),
+    Promise.all(chunks(ids, 40).map(c => call('fotoBatch', { ids: c, jenis: fj }).catch(() => ({})))).then(a => Object.assign({}, ...a))]).then(([n, f]) => {
+    $('pvc').innerHTML = ids.map(id => {
+      const s = S.d.siswa.find(x => x.ID === id), ft = f[id] || S.foto[id + '|m'] || '';
+      return jenis === 'skl' ? pgSkl(s, ft) : jenis === 'trans' ? pgNilai(s, n[id] || {}, 'TRANSKRIP NILAI') : pgInduk(s, ft) + pgNilai(s, n[id] || {}, 'LEMBAR NILAI RAPOR SEMESTER 1 - 6');
+    }).join('');
+  }).catch(e => { pvClose(); toast(e.message, 'err'); });
+}
+function pvClose() { $('pv').hidden = true; $('pvc').innerHTML = ''; }
+function rCetak() {
+  if (!P('cetak')) { $('s-cetak').innerHTML = ''; return; }
+  $('s-cetak').innerHTML = `<div class="head"><h2>Pusat Cetak</h2></div><div class="card"><div class="fg"><div><label>Rombel</label><select id="xk" class="in">${opt(myKelas().map(k => [k.ID, k.Nama]), '')}</select></div><div><label>Dokumen</label><select id="xj" class="in">${opt([['induk', 'Buku Induk (identitas + nilai)'], ['trans', 'Transkrip nilai'], ['skl', 'SKL (lulus tervalidasi)']], 'induk')}</select></div></div>
+  <div class="row mt" style="justify-content:flex-end"><button class="btn p" onclick="xCetak()">PRATINJAU &amp; CETAK</button></div><p class="mono tiny muted">Satu berkas per rombel. Pilih "Simpan sebagai PDF" di dialog cetak untuk arsip. SKL hanya untuk siswa lulus yang sudah divalidasi Kepala Sekolah.</p></div>`;
+}
+function xCetak() {
+  const k = $('xk').value, j = $('xj').value; if (!k) { toast('Pilih rombel', 'err'); return; }
+  let l = S.d.siswa.filter(s => s.KelasID === k);
+  if (j === 'skl') { const n = l.length; l = l.filter(s => s.Status === 'Lulus' && s.Valid === '1'); if (l.length < n) toast((n - l.length) + ' siswa dilewati (belum lulus atau belum divalidasi)'); }
+  cetak(l.map(s => s.ID), j);
+}
+
+start();
+</script>

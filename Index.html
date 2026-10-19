@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SiDUK SMKN Dander</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<?!= include('Stylesheet') ?>
+</head>
+<body>
+<div id="bar" class="topbar-load"></div>
+
+<!-- LOGIN -->
+<main id="login" class="login" hidden>
+  <aside class="l-brand">
+    <div class="mono tiny">SYS-ID: BUKU-INDUK-DANDER // V1.0</div>
+    <h1>SMK NEGERI<br>DANDER</h1>
+    <p>Sistem Informasi Buku Induk Digital (SiDUK): pendataan peserta didik, rekapitulasi nilai semester 1-6, kenaikan kelas, kelulusan, dan pencetakan lembar Buku Induk A4.</p>
+    <ul class="l-feat mono">
+      <li>01 / Biodata &amp; orang tua</li>
+      <li>02 / Nilai &amp; kunci semester</li>
+      <li>03 / Proses massal terkonfirmasi</li>
+      <li>04 / Cetak lembar A4 resmi</li>
+    </ul>
+  </aside>
+  <section class="l-form">
+    <div class="mono tiny l-top">FORM AUTENTIKASI PETUGAS</div>
+    <form id="loginForm" autocomplete="on" novalidate>
+      <h2>Selamat Datang</h2>
+      <p class="muted">Masuk dengan akun yang didaftarkan Tata Usaha. Tidak ada pendaftaran mandiri.</p>
+      <div id="loginErr" class="alert" hidden role="alert"></div>
+      <label for="lu">Username</label>
+      <input id="lu" class="in mono" autocomplete="username" required>
+      <label for="lp">Kata sandi</label>
+      <input id="lp" type="password" class="in" autocomplete="current-password" required>
+      <button id="lb" class="btn p wide" type="submit">MASUK KE SISTEM</button>
+      <p class="mono tiny muted mt">Sesi berakhir otomatis. Aktivitas penting dicatat ke log audit.</p>
+    </form>
+  </section>
+</main>
+
+<!-- APLIKASI -->
+<div id="app" hidden>
+  <nav id="side" class="side" aria-label="Menu utama">
+    <div class="brand"><span class="logo mono">DK</span><div><b class="mono">SiDUK // V1.0</b><br><span class="tiny">SMKN DANDER</span></div></div>
+    <div id="nav"></div>
+    <button class="btn wide" onclick="out()">KELUAR SESI</button>
+  </nav>
+  <div id="scrim" class="scrim" onclick="menu(0)"></div>
+
+  <header class="top">
+    <button class="btn ic" onclick="menu(1)" aria-label="Buka menu">&#9776;</button>
+    <input id="gq" class="in grow" placeholder="Cari nama / NISN siswa..." aria-label="Cari cepat" oninput="gsearch(this.value)">
+    <span id="clock" class="mono tiny hide-s"></span>
+    <button class="btn ic" onclick="theme()" aria-label="Ganti tema">&#9680;</button>
+    <div class="who"><b id="wn"></b><span id="wr" class="badge solid"></span></div>
+  </header>
+
+  <main class="main">
+    <section class="sec" id="s-dash"></section>
+    <section class="sec" id="s-siswa"></section>
+    <section class="sec" id="s-kelas"></section>
+    <section class="sec" id="s-program"></section>
+    <section class="sec" id="s-mapel"></section>
+    <section class="sec" id="s-nilai"></section>
+    <section class="sec" id="s-catatan"></section>
+    <section class="sec" id="s-proses"></section>
+    <section class="sec" id="s-cetak"></section>
+    <section class="sec" id="s-users"></section>
+    <section class="sec" id="s-sekolah"></section>
+  </main>
+</div>
+
+<div id="md" class="overlay" hidden><div class="modal" id="mdb" role="dialog" aria-modal="true"></div></div>
+<div id="pv" class="pv" hidden>
+  <div class="pvbar">
+    <button class="btn" onclick="pvClose()">KEMBALI</button>
+    <button class="btn p" onclick="window.print()">CETAK / SIMPAN PDF</button>
+    <span class="mono tiny">Pilih "Simpan sebagai PDF" di dialog cetak. Skala 100%, margin None.</span>
+  </div>
+  <div id="pvc"></div>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<?!= include('JavaScript') ?>
+</body>
+</html>
